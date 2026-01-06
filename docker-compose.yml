@@ -1,0 +1,41 @@
+services:
+  app:
+    build: .
+    image: resuminatore-app
+    command: pnpm run start:dev:fast
+    ports:
+      - '3000:3000'
+    networks:
+      - resuminatore-network
+
+  ai:
+    build: .
+    image: ai-service
+    command: 'pnpm run start:dev:fast ai-service'
+    networks:
+      - resuminatore-network
+
+  redis:
+    image: redis
+    container_name: redis
+    restart: unless-stopped
+    environment:
+      REDIS_ARGS: '--requirepass admin'
+    command: ['redis-server', '--requirepass', 'admin']
+    ports:
+      - '6379:6379'
+    networks:
+      - resuminatore-network
+    volumes:
+      - type: volume
+        source: resuminatore-redis-volume
+        target: /data
+
+volumes:
+  resuminatore-redis-volume:
+    driver: local
+    name: resuminatore-redis-volume
+
+networks:
+  resuminatore-network:
+    driver: bridge

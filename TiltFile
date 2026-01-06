@@ -1,0 +1,19 @@
+# Load your docker-compose.yml
+docker_compose('./docker-compose.yml')
+
+dc_resource('app',
+  labels=['app'],
+#   ports=['3000'],
+  links=['redis']
+)
+
+dc_resource('ai',
+  labels=['ai'],
+#   ports=['3001'],
+  links=['redis']
+)
+
+dc_resource('redis',
+  labels=['redis'],
+#   ports=['6379']
+)

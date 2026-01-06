@@ -1,0 +1,6 @@
+export const constants = {
+  API: 'api',
+  UTC_TIME_PATTERN: 'YYYY-MM-DDTHH:mm:ss.SSS',
+  REDIS_CLIENT: 'REDIS_CLIENT',
+  EMAIL_TRANSPORTER: 'EMAIL_TRANSPORTER',
+};
