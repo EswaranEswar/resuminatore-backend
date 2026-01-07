@@ -10,21 +10,38 @@ import { QueueEnum } from '@app/shared';
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const nodeEnv = config.get<string>('NODE_ENV');
-        const isDev = !nodeEnv || nodeEnv === 'development';
+        const nodeEnv = config.get<string>('NODE_ENV') || 'development';
+        const isDevelopment = nodeEnv === 'development';
 
-        const connection = isDev
-          ? {
-              host: config.get<string>('REDIS_HOST'),
-              port: config.get<number>('REDIS_PORT'),
-              password: config.get<string>('REDIS_PASSWORD'),
-            }
-          : {
-              url: config.get<string>('REDIS_URL'),
-            };
+        let connection:
+          | { host?: string; port?: number; password?: string }
+          | { url: string };
 
-        if (!connection) {
-          throw new Error('Redis configuration missing');
+        if (isDevelopment) {
+          // Development: Connect to local Redis
+          const host = config.get<string>('REDIS_HOST');
+          const port = config.get<number>('REDIS_PORT');
+          const password = config.get<string>('REDIS_PASSWORD');
+
+          console.log(`[BullMQ] Connecting to local Redis at ${host}:${port}`);
+
+          connection = {
+            host,
+            port,
+            password,
+          };
+        } else {
+          // Production: Connect via URL
+          const url = config.get<string>('REDIS_URL');
+
+          if (!url) {
+            throw new Error(
+              'Redis URL is required in production for BullMQ. Set REDIS_URL environment variable.',
+            );
+          }
+
+          console.log('[BullMQ] Connecting to Redis via URL (production mode)');
+          connection = { url };
         }
 
         return {

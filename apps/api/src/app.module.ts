@@ -19,6 +19,7 @@ import { QueueAdminModule } from './queue-admin/queue-admin.module';
 import { AiClientModule } from './ai-service/ai-client.module';
 import { TemplateModule } from './template/template.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { SystemBootstrapModule } from '@app/core/bootstrap/system-bootstrap.module';
 
 export const clsSetupHelper = (
   cls: ClsService,
@@ -63,6 +64,7 @@ export const clsSetupHelper = (
       },
     }),
     AuthModule,
+    SystemBootstrapModule,
     AiClientModule,
     CoreModule,
     ClsModule.forRoot({

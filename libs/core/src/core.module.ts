@@ -5,23 +5,21 @@ import { LoggerModule } from 'nestjs-pino';
 import { pinoLoggerConfig } from './logger/pino-logger.config';
 import { RedisModule } from './redis/redis.module';
 import { QueueModule } from './queue/queue.module';
-import { SystemBootstrapModule } from './bootstrap/system-bootstrap.module';
 
 @Module({
   imports: [
     MongodbLibModule,
     UtilsModule,
     RedisModule,
-    SystemBootstrapModule,
     LoggerModule.forRoot(pinoLoggerConfig),
     QueueModule,
   ],
   exports: [
-    MongodbLibModule,
-    UtilsModule,
-    RedisModule,
-    QueueModule,
-    SystemBootstrapModule,
+    MongodbLibModule, 
+    UtilsModule, 
+    LoggerModule, 
+    RedisModule, 
+    QueueModule
   ],
 })
 export class CoreModule {}

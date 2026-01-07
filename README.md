@@ -91,4 +91,3 @@ pnpm run start:dev
 
 - **PDF**: Uses `pdfmake` to generate PDFs from HTML content without a browser overhead.
 - **Word**: Uses `docx` to create high-quality, editable Microsoft Word files.
-

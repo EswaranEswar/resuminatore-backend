@@ -1,46 +1,45 @@
 import { ClientOptions, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 
+
+
 export function getRedisTransportOption(
   configService: ConfigService,
 ): ClientOptions {
-  const url = configService.get<string>('REDIS_URL');
-  const host = configService.get<string>('REDIS_HOST');
-  const port = Number(configService.get<string>('REDIS_PORT') ?? 6379);
-  const password = configService.get<string>('REDIS_PASSWORD');
+  const nodeEnv = configService.get<string>('NODE_ENV');
+  const isDevelopment = nodeEnv === 'development';
 
-  const isTls =
-    url?.startsWith('rediss://') ||
-    configService.get('REDIS_TLS') === 'true';
-
-  if (!url && !host) {
-    throw new Error(
-      'Redis transport misconfigured: set REDIS_URL or REDIS_HOST',
-    );
-  }
-
-  const options: any = {
-    lazyConnect: true,
-    maxRetriesPerRequest: null,
-    retryStrategy: (times: number) => Math.min(times * 200, 5000),
-};
-
-  if (url) {
-    options.url = url;
-  } else {
-    options.host = host;
-    options.port = port;
-    if (password) options.password = password;
-  }
-
-  if (isTls) {
-    options.tls = {
-      rejectUnauthorized: false,
+  if (isDevelopment) {
+    return {
+      transport: Transport.REDIS,
+      options: {
+        host: configService.get<string>('REDIS_HOST'),
+        port: Number(configService.get<string>('REDIS_PORT')),
+        password: configService.get<string>('REDIS_PASSWORD'),
+        retryAttempts: 0,
+        lazyConnect: true,
+      },
     };
   }
 
+  const redisUrl = configService.get<string>('REDIS_URL');
+  if (!redisUrl) {
+    throw new Error('REDIS_URL is required in production');
+  }
+
+  const parsed = new URL(redisUrl);
+
   return {
     transport: Transport.REDIS,
-    options,
+    options: {
+      host: parsed.hostname,
+      port: Number(parsed.port),
+      password: parsed.password,
+      retryAttempts: 0,
+      lazyConnect: true,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    },
   };
 }
