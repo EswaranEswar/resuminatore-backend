@@ -17,6 +17,8 @@ import { Express } from 'express';
 import { JwtAuthGuard } from '../auth/guard/jwt-auth.guard';
 import { RolesGuard } from '../auth/guard/roles.guard';
 import { Roles } from '../auth/decorator/roles.decorator';
+import { Public } from '../auth/decorator/public-decorator';
+import { SkipCsrf } from '../auth/decorator/csrf.decorator';
 
 @Controller('templates')
 export class TemplateController {
@@ -25,11 +27,15 @@ export class TemplateController {
     private readonly templateUploadService: TemplateUploadService,
   ) {}
 
+  @Public()
+  @SkipCsrf()
   @Get()
   async getGallery() {
     return await this.templateService.getGallery();
   }
 
+  @Public()
+  @SkipCsrf()
   @Get(':id')
   async getTemplateById(@Param('id') id: string) {
     return await this.templateService.findById(id);
@@ -83,6 +89,8 @@ export class TemplateController {
     return { message: 'Templates seeded successfully' };
   }
 
+  @Public()
+  @SkipCsrf()
   @Get('render/:id')
   async render(@Param('id') id: string) {
     return await this.templateService.renderTemplate(id);
