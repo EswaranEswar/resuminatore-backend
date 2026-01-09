@@ -29,13 +29,17 @@ async function bootstrap() {
   logger.log(`Environment: ${env}`);
 
   const frontendUrl = configService.get<string>('FRONTEND_URL');
+  const allowedOrigins = frontendUrl
+    ? frontendUrl.split(',').map((url) => url.trim().replace(/\/$/, ''))
+    : '*';
+
   logger.log(`Frontend URL: ${frontendUrl}`);
+  logger.log(`Allowed CORS Origins: ${JSON.stringify(allowedOrigins)}`);
 
   app.use(helmet());
-  logger.log(`CORS Origins: ${frontendUrl}`);
 
   app.enableCors({
-    origin: frontendUrl,
+    origin: allowedOrigins,
     credentials: true,
   });
 

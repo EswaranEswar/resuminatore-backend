@@ -191,9 +191,10 @@ export class AuthService {
       resetPasswordTokenExpiry: resetTokenExpiry,
     });
 
-    const resetLink = `${this.config.get<string>(
-      'FRONTEND_URL',
-    )}/reset-password?token=${encodeURIComponent(
+    const frontendUrl = this.config
+      .get<string>('FRONTEND_URL')
+      ?.replace(/\/$/, '');
+    const resetLink = `${frontendUrl}/reset-password?token=${encodeURIComponent(
       resetToken,
     )}&email=${encodeURIComponent(email)}`;
 

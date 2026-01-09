@@ -97,7 +97,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.authService.handleGoogleLogin(req.user, res);
-    return res.redirect(`${process.env.FRONTEND_URL}/`);
+    const frontendUrl = process.env.FRONTEND_URL?.replace(/\/$/, '');
+    return res.redirect(`${frontendUrl || ''}/`);
   }
 
   // FORGOT PASSWORD
