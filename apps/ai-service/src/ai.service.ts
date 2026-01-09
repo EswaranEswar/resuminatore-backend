@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { BASE_SYSTEM_PROMPT } from './prompts/base-system.prompt';
@@ -9,33 +8,18 @@ export const DAILY_AI_TOKEN_LIMIT = 20_000;
 
 @Injectable()
 export class AiService {
-  private readonly gemini: GoogleGenerativeAI;
   private readonly geminiModel: any;
 
   constructor(
-    private readonly configService: ConfigService,
     private readonly logger: PinoLogger,
+    private readonly gemini: GoogleGenerativeAI,
   ) {
     this.logger.setContext(AiService.name);
 
-    // Initialize Gemini
-    const geminiKey = this.configService.get<string>('GEMINI_API_KEY');
-    if (geminiKey) {
-      this.gemini = new GoogleGenerativeAI(geminiKey);
-      this.geminiModel = this.gemini.getGenerativeModel({
-        model: 'gemini-1.5-flash',
-      });
-      this.logger.info('Gemini initialized');
-    } else {
-      this.logger.warn('GEMINI_API_KEY not found');
-    }
-
-    // Ensure at least one AI provider is available
-    if (!geminiKey) {
-      throw new Error(
-        'At least one AI provider API key must be configured (GEMINI_API_KEY)',
-      );
-    }
+    this.geminiModel = this.gemini.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+    });
+    this.logger.info('Gemini initialized successfully');
   }
 
   async generateResponse(messages: ChatMessage[]) {
@@ -49,6 +33,17 @@ export class AiService {
   private async generateWithGemini(messages: ChatMessage[]) {
     try {
       this.logger.info('🤖 Gemini call started');
+      // @ts-ignore
+      const currentKey = this.gemini.apiKey;
+      if (currentKey) {
+        this.logger.info(
+          `Runtime Key Check: Length=${currentKey.length}, Starts=${currentKey.substring(0, 5)}`,
+        );
+      } else {
+        this.logger.error(
+          'Runtime Key Check: Key is undefined/null on this.gemini instance!',
+        );
+      }
 
       // Convert messages to Gemini format
       const chatHistory = messages.slice(0, -1).map((msg) => ({
@@ -81,7 +76,7 @@ export class AiService {
 
       return {
         output: text,
-        tokensUsed: 0, // Gemini doesn't provide token count in the same way
+        tokensUsed: 0,
         provider: 'gemini',
       };
     } catch (error: any) {

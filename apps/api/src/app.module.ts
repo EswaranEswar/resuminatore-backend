@@ -3,11 +3,7 @@ import { ExecutionContext, Module } from '@nestjs/common';
 import { ClsModule, ClsService } from 'nestjs-cls';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import {
-  CoreModule,
-  HttpExceptionFilter,
-  LoggingInterceptor,
-} from '@app/core';
+import { CoreModule, HttpExceptionFilter, LoggingInterceptor } from '@app/core';
 import { UserModule } from './user/user.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
@@ -20,6 +16,9 @@ import { AiClientModule } from './ai-service/ai-client.module';
 import { TemplateModule } from './template/template.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { SystemBootstrapModule } from '@app/core/bootstrap/system-bootstrap.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { CsrfGuard } from './auth/guard/csrf.guard';
+import { HealthModule } from './health/health.module';
 
 export const clsSetupHelper = (
   cls: ClsService,
@@ -54,6 +53,14 @@ export const clsSetupHelper = (
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot({
+      throttlers: [
+        {
+          ttl: 60 * 1000,
+          limit: 100, // normal APIs
+        },
+      ],
+    }),
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'apps/api/public'),
       serveRoot: '/',
@@ -83,6 +90,7 @@ export const clsSetupHelper = (
       envFilePath: '.env',
     }),
     ExportModule,
+    HealthModule,
     ResumeModule,
     TemplateModule,
     UserModule,
@@ -93,7 +101,15 @@ export const clsSetupHelper = (
     AppService,
     {
       provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: CsrfGuard,
     },
     {
       provide: APP_INTERCEPTOR,

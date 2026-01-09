@@ -9,7 +9,9 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import { Public } from '../auth/decorator/public-decorator';
+import { SkipCsrf } from '../auth/decorator/csrf.decorator';
 
+@SkipCsrf()
 @Controller('resume/export')
 export class ExportController {
   constructor(private readonly exportService: ExportService) {}

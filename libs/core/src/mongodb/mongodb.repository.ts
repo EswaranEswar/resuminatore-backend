@@ -46,7 +46,7 @@ export class BaseMongodbRepository<T extends Document & BaseDocument> {
 
   async findAll(
     options?: { session?: ClientSession },
-    projection?: any,
+    projection?: Record<string, 0 | 1>
   ): Promise<T[]> {
     const model = await this.getModel();
     return model

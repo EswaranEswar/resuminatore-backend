@@ -4,7 +4,7 @@ import { ClsModule, ClsService } from 'nestjs-cls';
 import { AiMessageController } from './ai.controller';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CoreModule } from '@app/core';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const clsSetupHelper = (cls: ClsService, context: ExecutionContext) => {
   try {
@@ -37,11 +37,24 @@ export const clsSetupHelper = (cls: ClsService, context: ExecutionContext) => {
   providers: [
     AiService,
     {
-      provide: OpenAI,
-      useFactory: (configService: ConfigService) =>
-        new OpenAI({
-          apiKey: configService.get<string>('GEMINI_API_KEY'),
-        }),
+      provide: GoogleGenerativeAI,
+      useFactory: (configService: ConfigService) => {
+        const apiKey = configService.get<string>('GEMINI_API_KEY');
+        if (!apiKey) {
+          throw new Error(
+            'GEMINI_API_KEY is not defined in environment variables',
+          );
+        }
+        // Handle docker env_file quirks: quotes are part of value, inline comments are part of value
+        const sanitizedKey = apiKey
+          .split('#')[0]
+          .replace(/^["']|["']$/g, '')
+          .trim();
+        console.log(
+          `CoreModule: GEMINI_API_KEY loaded (Length: ${sanitizedKey.length}, Starts: ${sanitizedKey.substring(0, 4)}...)`,
+        );
+        return new GoogleGenerativeAI(sanitizedKey);
+      },
       inject: [ConfigService],
     },
   ],

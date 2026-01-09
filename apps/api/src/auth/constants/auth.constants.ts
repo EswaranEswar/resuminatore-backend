@@ -1,10 +1,11 @@
 export const hashConstants = {
   saltRounds: 10,
 };
+
 export const jwtConstants = {
-  secret: process.env.JWT_SECRET || 'secretKey',
-  accessExpiry: '1d',
-  refreshExpiry: '7d',
+  secret: 'your-secret',
+  accessExpiry: 15 * 60,        // 900 seconds
+  refreshExpiry: 7 * 24 * 60 * 60, // 604800 seconds
 };
 
 

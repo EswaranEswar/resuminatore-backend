@@ -131,6 +131,15 @@ export class MongodbService implements OnModuleInit, OnModuleDestroy {
     return conn.model<T>(modelDef.name, modelDef.schema);
   }
 
+  async isHealthy(): Promise<boolean> {
+    try {
+      await this.getConnection().db?.admin().ping();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
   isConnected(): boolean {
     return this.connection?.readyState === 1;
   }

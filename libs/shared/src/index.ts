@@ -4,6 +4,7 @@ export * from './shared.service';
 export * from './constants/constants';
 export * from './constants/enum';
 export * from './constants/tableNames';
+export * from './constants/topics';
 
 //Zod Schemas
 export * from './schema/resume.schema';

@@ -2,14 +2,18 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
-  Inject,
   Logger,
+  Inject,
 } from '@nestjs/common';
-import { Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
+import { Response } from 'express';
 import * as bcrypt from 'bcrypt';
-import { UserService } from '@app/user';
+import { randomBytes } from 'crypto';
+import { ConfigService } from '@nestjs/config';
+import { ClsService } from 'nestjs-cls';
+import Redis from 'ioredis';
 
+import { UserService } from '@app/user';
 import {
   RegisterDto,
   LoginDto,
@@ -20,38 +24,37 @@ import {
   constants,
   UserType,
 } from '@app/shared';
-
-import { ClsService } from 'nestjs-cls';
-import { randomBytes } from 'crypto';
-import { ConfigService } from '@nestjs/config';
-import { QueueService } from '@app/core';
-import { EmailTemplates } from '@app/core';
-import Redis from 'ioredis';
+import { QueueService, EmailTemplates } from '@app/core';
 import { hashConstants, jwtConstants } from './constants/auth.constants';
+import { CsrfService } from './csrf/csrf.service';
+import { getCookieOptions } from './cookie.config';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
-    private usersService: UserService,
-
-    private jwtService: JwtService,
-    private clsService: ClsService,
-    private config: ConfigService,
-    private queueService: QueueService,
-    @Inject(constants.REDIS_CLIENT) private redis: Redis,
+    private readonly usersService: UserService,
+    private readonly jwtService: JwtService,
+    private readonly clsService: ClsService,
+    private readonly config: ConfigService,
+    private readonly queueService: QueueService,
+    private readonly csrfService: CsrfService,
+    @Inject(constants.REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
+  // ─────────────────────────────────────────────
+  // REGISTER
+  // ─────────────────────────────────────────────
   async register(dto: RegisterDto) {
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) throw new UnauthorizedException('User already exists');
 
-    if (dto.password !== dto.confirmPassword)
+    if (dto.password !== dto.confirmPassword) {
       throw new BadRequestException('Passwords do not match');
+    }
 
     const hashed = await bcrypt.hash(dto.password, hashConstants.saltRounds);
-
     const otp = this.generateOtp();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -68,46 +71,36 @@ export class AuthService {
       updatedBy: user.id,
     });
 
-    this.clsService.set('session', {
-      ...this.clsService.get('session'),
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-      },
-    });
-
-    if (!user.email) throw new UnauthorizedException('User email not found');
-
     await this.queueService.sendEmail({
       email: user.email,
       mailDetails: {
         subject: 'OTP Code',
-        html: EmailTemplates.otp(user.name || '', user.otp || ''),
+        html: EmailTemplates.otp(user.name || '', otp),
       },
     });
 
-    this.logger.log(
-      `New user registered: ${user.email} (ID: ${user.id}, Name: ${user.name})`,
-    );
-    return { message: 'OTP sent to email. Please verify your account.', user };
+    return { message: 'OTP sent to email. Please verify your account.' };
   }
 
+  // ─────────────────────────────────────────────
+  // VERIFY OTP
+  // ─────────────────────────────────────────────
   async verifyOtp(dto: VerifyOtpDto) {
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user) throw new UnauthorizedException('User not found');
+    if (!user || !user.otp || !user.otpExpiry) {
+      throw new UnauthorizedException('Invalid OTP request');
+    }
 
-    if (!user.otp || !user.otpExpiry)
-      throw new UnauthorizedException('No OTP generated');
-
-    if (user.otpExpiry < new Date())
+    if (user.otpExpiry < new Date()) {
       throw new UnauthorizedException('OTP expired');
+    }
 
-    if (dto.otp !== user.otp) throw new UnauthorizedException('Invalid OTP');
+    if (dto.otp !== user.otp) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
 
     await this.usersService.verifyUser(dto.email);
 
-    // await this.emailService.sendWelcomeEmail(dto.email, user.name);
     await this.queueService.sendEmail({
       email: user.email,
       mailDetails: {
@@ -116,76 +109,82 @@ export class AuthService {
       },
     });
 
+    await this.generateAndSetTokens(user);
+
     return {
-      ...(await this.generateAndSetTokens(user)),
       message: 'Account verified successfully',
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        planType: user.planType,
-        avatar: user.avatar,
-      },
+      user: this.safeUser(user),
     };
   }
 
+  // ─────────────────────────────────────────────
+  // LOGIN
+  // ─────────────────────────────────────────────
   async login(dto: LoginDto) {
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (!user || !user.password) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
-    if (!user.isVerified)
-      throw new UnauthorizedException(
-        'Account not verified. Please verify OTP first.',
-      );
+    if (!user.isVerified) {
+      throw new UnauthorizedException('Account not verified');
+    }
 
-    if (!user.password) throw new UnauthorizedException('Password not found');
+    const match = await bcrypt.compare(dto.password, user.password);
+    if (!match) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
-    const isMatch = await bcrypt.compare(dto.password, user.password);
-    if (!isMatch) throw new UnauthorizedException('Invalid credentials');
+    await this.generateAndSetTokens(user);
+
+    const origin = this.clsService.get('req')?.headers?.origin;
+    this.logger.log(
+      `User logged in: ${user.email} from origin: ${origin || 'direct/unknown'}`,
+    );
 
     return {
-      ...(await this.generateAndSetTokens(user)),
       message: 'Login successful',
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        planType: user.planType,
-        avatar: user.avatar,
-        role: user.role,
-      },
+      user: this.safeUser(user),
     };
   }
 
   async sendOtp(dto: SendOtpDto) {
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user) throw new UnauthorizedException('User not found');
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
 
     const otp = this.generateOtp();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
-    await this.usersService.updateUserByEmail(dto.email, { otp, otpExpiry });
+    await this.usersService.updateUserByEmail(dto.email, {
+      otp,
+      otpExpiry,
+    });
+
     await this.queueService.sendEmail({
       email: user.email,
       mailDetails: {
         subject: 'OTP Code',
-        html: EmailTemplates.otp(user.name, otp),
+        html: EmailTemplates.otp(user.name || '', otp),
       },
     });
 
-    return { message: 'OTP resent successfully' };
-  }
+    this.logger.log(`OTP sent to ${user.email}`);
 
-  private generateOtp(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return {
+      message: 'OTP sent successfully',
+    };
   }
 
   async forgotPassword(email: string) {
     const user = await this.usersService.findByEmail(email);
-    if (!user) throw new UnauthorizedException('User not found');
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
 
-    const resetToken = this.generateResetToken();
-    const resetTokenExpiry = new Date(Date.now() + 30 * 60 * 1000);
+    const resetToken = randomBytes(32).toString('hex');
+    const resetTokenExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 mins
 
     await this.usersService.updateUserByEmail(email, {
       resetPasswordToken: resetToken,
@@ -206,235 +205,199 @@ export class AuthService {
       },
     });
 
-    return { message: 'Password reset link sent to email' };
+    this.logger.log(`Password reset link sent to ${email}`);
+
+    return {
+      message: 'Password reset link sent to email',
+    };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user) throw new UnauthorizedException('User not found');
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
 
-    if (!user.resetPasswordToken || !user.resetPasswordTokenExpiry)
-      throw new UnauthorizedException('No reset token generated');
+    if (!user.resetPasswordToken || !user.resetPasswordTokenExpiry) {
+      throw new UnauthorizedException('No reset token found');
+    }
 
-    if (user.resetPasswordTokenExpiry < new Date())
+    if (user.resetPasswordTokenExpiry < new Date()) {
       throw new UnauthorizedException('Reset token expired');
+    }
 
-    if (user.resetPasswordToken !== dto.token)
+    if (user.resetPasswordToken !== dto.token) {
       throw new UnauthorizedException('Invalid reset token');
+    }
 
     const hashedPassword = await bcrypt.hash(
       dto.newPassword,
       hashConstants.saltRounds,
     );
 
-    const updatedPassword = await this.usersService.updateUserByEmail(
-      dto.email,
-      {
-        password: hashedPassword,
-        resetPasswordToken: null,
-        resetPasswordTokenExpiry: null,
-      },
-    );
+    await this.usersService.updateUserByEmail(dto.email, {
+      password: hashedPassword,
+      resetPasswordToken: null,
+      resetPasswordTokenExpiry: null,
+    });
 
-    return { message: 'Password reset successfully', updatedPassword };
+    this.logger.log(`Password reset successful for ${dto.email}`);
+
+    return {
+      message: 'Password reset successfully',
+    };
   }
 
-  private generateResetToken(): string {
-    return randomBytes(32).toString('hex');
+  // ─────────────────────────────────────────────
+  // GOOGLE OAUTH
+  // ─────────────────────────────────────────────
+  async handleGoogleLogin(dto: OathLoginDto, res: Response) {
+    if (!dto.email) {
+      throw new UnauthorizedException('Google login failed');
+    }
+
+    let user = await this.usersService.findByEmail(dto.email);
+
+    if (!user) {
+      user = await this.usersService.createUser({
+        name: dto.name,
+        email: dto.email,
+        provider: 'GOOGLE',
+        providerId: dto.providerId,
+        avatar: dto.avatar,
+        isVerified: true,
+      });
+
+      await this.usersService.updateUserByEmail(user.email, {
+        createdBy: user.id,
+        updatedBy: user.id,
+      });
+    } else {
+      await this.usersService.linkOAuthToExistingUser({
+        email: user.email,
+        provider: 'GOOGLE',
+        providerId: dto.providerId,
+        avatar: dto.avatar,
+      });
+    }
+
+    // set cookies via CLS
+    this.clsService.set('res', res);
+    await this.generateAndSetTokens(user);
+
+    return {
+      message: 'Google login successful',
+      user: this.safeUser(user),
+    };
   }
 
-  async logout() {
+  // ─────────────────────────────────────────────
+  // REFRESH TOKEN
+  // ─────────────────────────────────────────────
+  async refreshToken() {
     const req = this.clsService.get('req') as any;
-    const token =
-      req?.headers?.authorization?.split(' ')[1] || req?.cookies?.access_token;
-    const userId = this.clsService.get('session')?.user?.id;
+    const token = req?.cookies?.refresh_token;
 
-    const decoded: any = token ? this.jwtService.decode(token) : null;
-    const ttl = decoded?.exp - Math.floor(Date.now() / 1000);
+    if (!token) throw new UnauthorizedException('No refresh token');
 
-    // Blacklist the access token
-    if (token) {
-      await this.redis.set(`blacklist:${token}`, '1', 'EX', ttl > 0 ? ttl : 10);
+    const decoded = await this.jwtService.verifyAsync(token, {
+      secret: jwtConstants.secret,
+    });
+
+    const user = await this.usersService.findByUserId(decoded.sub);
+    if (!user || !user.refreshToken) {
+      throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Clear refresh token from DB
-    if (userId) {
-      const user = await this.usersService.findByUserId(userId);
-      if (user) {
-        await this.usersService.updateUserByEmail(user.email, {
-          refreshToken: null,
-        });
-      }
-    }
+    const valid = await bcrypt.compare(token, user.refreshToken);
+    if (!valid) throw new UnauthorizedException('Invalid refresh token');
 
-    // Clear cookies
+    await this.generateAndSetTokens(user);
+    return { message: 'Token refreshed' };
+  }
+
+  // ─────────────────────────────────────────────
+  // LOGOUT
+  // ─────────────────────────────────────────────
+  async logout() {
     const res = this.clsService.get<Response>('res');
     if (res) {
-      res.clearCookie('access_token');
-      res.clearCookie('refresh_token');
+      res.clearCookie('access_token', { path: '/' });
+      res.clearCookie('refresh_token', { path: '/' });
     }
-
-    this.logger.log(
-      `User logged out: ${decoded?.email || userId} (ID: ${userId})`,
-    );
     return { message: 'Logged out successfully' };
   }
 
-  async refreshToken(refreshToken?: string) {
-    try {
-      const req = this.clsService.get('req') as any;
-      const token = refreshToken || req?.cookies?.refresh_token;
-
-      if (!token) {
-        throw new UnauthorizedException('No refresh token provided');
-      }
-
-      const decoded = await this.jwtService.verifyAsync(token, {
-        secret: jwtConstants.secret,
-      });
-
-      const user = await this.usersService.findByUserId(decoded.sub);
-      if (!user || !user.refreshToken) {
-        throw new UnauthorizedException('Invalid refresh token');
-      }
-
-      const isValid = await bcrypt.compare(token, user.refreshToken);
-      if (!isValid) {
-        throw new UnauthorizedException('Invalid refresh token');
-      }
-
-      return await this.generateAndSetTokens(user);
-    } catch (error) {
-      this.logger.error(`Refresh token error: ${error.message}`);
-      throw new UnauthorizedException('Invalid or expired refresh token');
-    }
-  }
-
+  // ─────────────────────────────────────────────
+  // INTERNAL TOKEN LOGIC (SINGLE SOURCE)
+  // ─────────────────────────────────────────────
   private async generateAndSetTokens(user: UserType) {
-    const payload = { sub: user.id, email: user.email, role: user.role };
-    const accessToken = this.generateAccessToken(payload);
-    const refreshToken = this.generateRefreshToken(payload);
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      avatar: user.avatar,
+      planType: user.planType,
+    };
+
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: jwtConstants.accessExpiry,
+    });
+
+    const refreshToken = this.jwtService.sign(payload, {
+      expiresIn: jwtConstants.refreshExpiry,
+    });
 
     await this.usersService.updateUserByEmail(user.email, {
       refreshToken: await bcrypt.hash(refreshToken, hashConstants.saltRounds),
     });
 
-    this.setAuthCookies(accessToken, refreshToken);
-
-    // Ensure session is set for the current request context
-    this.clsService.set('session', {
-      ...this.clsService.get('session'),
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-      },
-    });
-
-    return {
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    };
-  }
-
-  private generateAccessToken(payload: any): string {
-    return this.jwtService.sign(payload, {
-      expiresIn: jwtConstants.accessExpiry as any,
-    });
-  }
-
-  private generateRefreshToken(payload: any): string {
-    return this.jwtService.sign(payload, {
-      expiresIn: jwtConstants.refreshExpiry as any,
-    });
-  }
-
-  async handleGoogleLogin(dto: OathLoginDto) {
-    try {
-      this.logger.log(`Handling Google login for email: ${dto.email}`);
-
-      if (!dto.email) {
-        this.logger.error('Google login failed: No email provided in DTO');
-        throw new UnauthorizedException(
-          'Google login failed: No email provided',
-        );
-      }
-
-      let user = await this.usersService.findByEmail(dto.email);
-
-      if (!user) {
-        this.logger.log(`Creating new user for email: ${dto.email}`);
-        // New user from Google
-        user = await this.usersService.createUser({
-          name: dto.name,
-          email: dto.email,
-          provider: 'GOOGLE',
-          providerId: dto.providerId,
-          avatar: dto.avatar,
-          isVerified: true,
-        });
-
-        this.logger.log(`User created successfully: ${user.id}.`);
-
-        // Update user with audit fields
-        await this.usersService.updateUserByEmail(user.email, {
-          createdBy: user.id,
-          updatedBy: user.id,
-        });
-      } else {
-        this.logger.log(`Existing user found: ${user.id}. Linking OAuth.`);
-        // Existing user → update OAuth connection
-        await this.usersService.linkOAuthToExistingUser({
-          email: user.email,
-          provider: 'GOOGLE',
-          providerId: dto.providerId,
-          avatar: dto.avatar,
-        });
-      }
-
-      return {
-        ...(await this.generateAndSetTokens(user)),
-        message: 'Google login successful',
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          planType: user.planType,
-          avatar: user.avatar,
-          role: user.role,
-        },
-      };
-    } catch (error) {
-      this.logger.error(
-        `Error in handleGoogleLogin: ${error.message}`,
-        error.stack,
-      );
-      throw error;
-    }
-  }
-
-  private setAuthCookies(accessToken: string, refreshToken: string) {
     const res = this.clsService.get<Response>('res');
-
     if (!res) {
-      this.logger.warn('Response object not found in CLS context');
+      this.logger.error(
+        'No Response object found in CLS. Tokens not set in cookies.',
+      );
       return;
     }
-    const isProd = process.env.NODE_ENV === 'production';
+
+    const { secure, sameSite } = getCookieOptions();
 
     res.cookie('access_token', accessToken, {
       httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      secure,
+      sameSite,
+      path: '/',
+      maxAge: 15 * 60 * 1000,
     });
 
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
-      secure: isProd,
-      sameSite: 'lax',
-      path: '/api/auth/refresh', // Restricted path for refresh token
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      secure,
+      sameSite,
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+
+    // CSRF cookie (JS readable)
+    this.csrfService.setCsrfCookie(res);
+  }
+
+  // ─────────────────────────────────────────────
+  // HELPERS
+  // ─────────────────────────────────────────────
+  private generateOtp(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private safeUser(user: UserType) {
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatar: user.avatar,
+      planType: user.planType,
+      role: user.role,
+    };
   }
 }

@@ -7,7 +7,10 @@ export const RedisProvider: Provider = {
   provide: constants.REDIS_CLIENT,
   inject: [ConfigService],
   useFactory: async (configService: ConfigService) => {
-    const nodeEnv = configService.get<string>('NODE_ENV');
+    const nodeEnv =
+      configService.get<string>('NODE_ENV') ||
+      process.env.NODE_ENV ||
+      'development';
     const isDevelopment = nodeEnv === 'development';
 
     const baseOptions: RedisOptions = {

@@ -36,6 +36,13 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractTokenFromHeader(request);
 
     if (!token) {
+      if (request.url.includes('/api/auth/me')) {
+        this.logger.debug(`Guest user check on /me - returning 401`);
+      } else {
+        this.logger.warn(
+          `No token provided for: ${request.method} ${request.url}`,
+        );
+      }
       throw new UnauthorizedException('No token provided');
     }
 
@@ -53,6 +60,9 @@ export class JwtAuthGuard implements CanActivate {
         id: payload.sub,
         email: payload.email,
         role: payload.role,
+        name: payload.name,
+        avatar: payload.avatar,
+        planType: payload.planType,
       };
       request.user = user;
 
