@@ -50,10 +50,14 @@ export class TemplateController {
     @UploadedFile() file: Express.Multer.File,
     @Body('name') name: string,
     @Body('category') category: string,
+    @Body('thumbnailUrl') thumbnailUrl?: string,
+    @Body('previewUrl') previewUrl?: string,
   ) {
     return await this.templateUploadService.uploadTemplate(file.buffer, {
       name,
       category,
+      thumbnailUrl,
+      previewUrl,
     });
   }
 

@@ -1,58 +1,51 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
 import { JSDOM } from 'jsdom';
-import puppeteer from 'puppeteer';
+import axios from 'axios';
 
 @Injectable()
 export class ExportService {
   private readonly logger = new Logger(ExportService.name);
+  private readonly pdfShiftApiKey: string | undefined;
+
+  constructor(private readonly configService: ConfigService) {
+    this.pdfShiftApiKey = this.configService.get<string>('PDF_SHIFTER_API_KEY');
+  }
 
   /**
-   * Generate PDF from HTML using Puppeteer for exact visual fidelity
+   * Generate PDF from HTML using PDFShift API
    */
   async generatePdf(html: string): Promise<Buffer> {
-    const isLinux = process.platform === 'linux';
-    const executablePath =
-      process.env.PUPPETEER_EXECUTABLE_PATH ||
-      (isLinux ? '/usr/bin/chromium' : undefined);
-
-    const browser = await puppeteer.launch({
-      headless: true,
-      executablePath,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
-
     try {
-      const page = await browser.newPage();
+      if (!this.pdfShiftApiKey) {
+        throw new Error('PDF_SHIFTER_API_KEY is not configured');
+      }
 
-      // Set content and wait for network idle to ensure fonts/CSS are loaded
-      await page.setContent(html, {
-        waitUntil: ['load', 'networkidle0'],
-      });
+      this.logger.log('Generating PDF via PDFShift API...');
 
-      // Generate PDF
-      const pdfBuffer = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '0px',
-          right: '0px',
-          bottom: '0px',
-          left: '0px',
+      const response = await axios.post(
+        'https://api.pdfshift.io/v3/convert/pdf',
+        {
+          source: html,
+          format: 'A4',
+          margin: '0',
         },
-      });
+        {
+          headers: {
+            'X-API-Key': this.pdfShiftApiKey,
+            'Content-Type': 'application/json',
+          },
+          responseType: 'arraybuffer',
+        },
+      );
 
-      return Buffer.from(pdfBuffer);
-    } catch (error) {
-      this.logger.error('PDF generation error:', error);
+      return Buffer.from(response.data);
+    } catch (error: any) {
+      this.logger.error(
+        `PDFShift Error: ${error.response?.data?.toString() || error.message}`,
+      );
       throw new Error(`Failed to generate PDF: ${error.message}`);
-    } finally {
-      await browser.close();
     }
   }
 
@@ -65,7 +58,6 @@ export class ExportService {
       const document = dom.window.document;
       const body = document.body;
 
-      // Helper to convert inline nodes (text, b, i, span) to TextRuns
       const parseInlineNodes = (
         parentNode: Node,
         formatting: {
@@ -78,7 +70,6 @@ export class ExportService {
 
         parentNode.childNodes.forEach((node) => {
           if (node.nodeType === 3) {
-            // Text Node
             const text = node.textContent;
             if (text) {
               runs.push(
@@ -91,7 +82,6 @@ export class ExportService {
               );
             }
           } else if (node.nodeType === 1) {
-            // Element Node
             const el = node as Element;
             const tagName = el.tagName;
 
@@ -110,7 +100,6 @@ export class ExportService {
                 ...parseInlineNodes(node, { ...formatting, underline: true }),
               );
             } else {
-              // Recurse for standard spans/other inline containers
               runs.push(...parseInlineNodes(node, formatting));
             }
           }
@@ -119,7 +108,6 @@ export class ExportService {
         return runs;
       };
 
-      // Block elements that start a new paragraph context
       const BLOCK_TAGS = new Set([
         'P',
         'DIV',
@@ -146,14 +134,12 @@ export class ExportService {
 
         const flushInline = () => {
           if (inlineAccumulator.length > 0) {
-            // Create a wrapper node to pass to parseInlineNodes
             const wrapper = document.createElement('div');
             inlineAccumulator.forEach((n) =>
               wrapper.appendChild(n.cloneNode(true)),
             );
 
             const runs = parseInlineNodes(wrapper);
-            // Only add paragraph if there is actual content or breaks
             if (
               runs.length > 0 &&
               runs.some((r: any) => r.text?.trim() || r.break)
@@ -169,16 +155,14 @@ export class ExportService {
             node.nodeType === 1 &&
             BLOCK_TAGS.has((node as Element).tagName)
           ) {
-            // It's a block element
-            flushInline(); // Finish any preceding inline text
+            flushInline();
             paragraphs.push(...parseBlockElement(node as Element));
           } else {
-            // It's text, or an inline element (span, b, etc), or whitespace
             inlineAccumulator.push(node);
           }
         });
 
-        flushInline(); // Flush any remaining inline content
+        flushInline();
         return paragraphs;
       };
 
@@ -187,7 +171,6 @@ export class ExportService {
         const paragraphs: Paragraph[] = [];
 
         if (tagName.startsWith('H') && tagName.length === 2) {
-          // Handle Headings (preserve inline formatting)
           const levelMap: Record<string, any> = {
             H1: HeadingLevel.HEADING_1,
             H2: HeadingLevel.HEADING_2,
@@ -204,7 +187,6 @@ export class ExportService {
             }),
           );
         } else if (tagName === 'UL' || tagName === 'OL') {
-          // Handle Lists
           const items = element.querySelectorAll(':scope > li');
           items.forEach((li) => {
             const runs = parseInlineNodes(li);
@@ -217,7 +199,6 @@ export class ExportService {
             );
           });
         } else if (tagName === 'LI') {
-          // Fallback for LI not in UL/OL (rare)
           const runs = parseInlineNodes(element);
           paragraphs.push(
             new Paragraph({
@@ -226,8 +207,6 @@ export class ExportService {
             }),
           );
         } else {
-          // Generic container (DIV, SECTION, P, etc.) -> Recurse
-          // Even P can contain block elements in loose HTML, though invalid
           paragraphs.push(...processNodeList(element.childNodes));
         }
 
@@ -236,7 +215,6 @@ export class ExportService {
 
       const allParagraphs = processNodeList(body.childNodes);
 
-      // docx requires at least one paragraph
       if (allParagraphs.length === 0) {
         allParagraphs.push(new Paragraph({ text: '' }));
       }
@@ -251,9 +229,47 @@ export class ExportService {
       });
 
       return await Packer.toBuffer(doc);
-    } catch (error) {
-      console.error('Word generation error:', error);
+    } catch (error: any) {
+      this.logger.error('Word generation error:', error);
       throw new Error(`Failed to generate Word document: ${error.message}`);
+    }
+  }
+
+  /**
+   * Generate Image (PNG) from HTML using PDFShift API
+   */
+  async generateImage(html: string): Promise<Buffer> {
+    try {
+      if (!this.pdfShiftApiKey) {
+        throw new Error('PDF_SHIFTER_API_KEY is not configured');
+      }
+
+      this.logger.log('Generating Image via PDFShift API...');
+
+      const response = await axios.post(
+        'https://api.pdfshift.io/v3/convert/png',
+        {
+          source: html,
+          width: 800,
+          height: 1040,
+        },
+        {
+          headers: {
+            'X-API-Key': this.pdfShiftApiKey,
+            'Content-Type': 'application/json',
+          },
+          responseType: 'arraybuffer',
+        },
+      );
+
+      return Buffer.from(response.data);
+    } catch (error: any) {
+      this.logger.error(
+        `PDFShift Image Error: ${
+          error.response?.data?.toString() || error.message
+        }`,
+      );
+      throw new Error(`Failed to generate image: ${error.message}`);
     }
   }
 }

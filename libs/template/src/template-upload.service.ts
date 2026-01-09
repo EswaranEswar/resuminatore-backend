@@ -1,19 +1,27 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import * as AdmZip from 'adm-zip';
-import * as puppeteer from 'puppeteer';
 import * as path from 'path';
 import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { TemplateRepository } from './template.repository';
 import { MongoTemplate } from '@app/shared';
+import { ExportService } from '@app/export';
 
 @Injectable()
 export class TemplateUploadService {
-  constructor(private readonly templateRepository: TemplateRepository) {}
+  constructor(
+    private readonly templateRepository: TemplateRepository,
+    private readonly exportService: ExportService,
+  ) {}
 
   async uploadTemplate(
     fileBuffer: Buffer,
-    metadata: { name: string; category: string },
+    metadata: {
+      name: string;
+      category: string;
+      thumbnailUrl?: string;
+      previewUrl?: string;
+    },
   ): Promise<MongoTemplate> {
     // 1. Extract ZIP
     const { html, css } = this.extractZip(fileBuffer);
@@ -24,8 +32,15 @@ export class TemplateUploadService {
     // 3. Generate Seed Data
     const seedData = this.generateSeedData(placeholders);
 
-    // 4. Generate Assets (Thumbnails & Preview)
-    const assets = await this.generateAssets(html, css, seedData);
+    // 4. Generate Assets (Thumbnails & Preview) if not provided
+    let thumbUrl = metadata.thumbnailUrl;
+    let previewUrl = metadata.previewUrl;
+
+    if (!thumbUrl || !previewUrl) {
+      const assets = await this.generateAssets(html, css, seedData);
+      thumbUrl = thumbUrl || assets.thumbUrl;
+      previewUrl = previewUrl || assets.previewUrl;
+    }
 
     // 5. Default Styles (should be extracted or passed, but using defaults for now)
     const defaultStyles = {
@@ -47,8 +62,8 @@ export class TemplateUploadService {
       htmlStructure: html,
       cssStyles: css,
       sampleData: seedData,
-      thumbnailUrl: assets.thumbUrl,
-      previewUrl: assets.previewUrl,
+      thumbnailUrl: thumbUrl,
+      previewUrl: previewUrl,
       placeholders,
       isPremium: false,
       styles: defaultStyles,
@@ -144,46 +159,37 @@ export class TemplateUploadService {
     css: string,
     seedData: any,
   ): Promise<{ thumbUrl: string; previewUrl: string }> {
-    const renderedHtml = this.renderHtml(html, css, seedData);
-
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-
     try {
-      const page = await browser.newPage();
-      await page.setViewport({ width: 800, height: 1040 });
-      await page.setContent(renderedHtml, { waitUntil: 'networkidle0' });
+      const renderedHtml = this.renderHtml(html, css, seedData);
+      const imageBuffer = await this.exportService.generateImage(renderedHtml);
 
-      // Ensure directories exist
-      const publicDir = path.join(process.cwd(), 'apps/api/public/templates');
-      const thumbsDir = path.join(publicDir, 'thumbnails');
-      const previewsDir = path.join(publicDir, 'previews');
-
-      if (!fs.existsSync(thumbsDir))
-        fs.mkdirSync(thumbsDir, { recursive: true });
-      if (!fs.existsSync(previewsDir))
-        fs.mkdirSync(previewsDir, { recursive: true });
-
+      // Save the generated image to public directory
       const assetId = uuidv4();
-      const thumbFilename = `${assetId}-thumb.png`;
-      const previewFilename = `${assetId}-preview.png`;
+      const filename = `${assetId}.png`;
+      const publicPath = path.join(
+        process.cwd(),
+        'apps/api/public/templates/thumbnails',
+        filename,
+      );
 
-      // Thumbnail (smaller)
-      // Actually we can just resize or take screenshot. For now taking full page as thumb but smaller?
-      // Usually thumb is smaller viewport or resized. Let's keep one size for now as per current system, just simplified.
-      await page.screenshot({ path: path.join(thumbsDir, thumbFilename) });
+      // Ensure directory exists
+      const dir = path.dirname(publicPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
 
-      // Preview (maybe larger or same)
-      await page.screenshot({ path: path.join(previewsDir, previewFilename) });
+      fs.writeFileSync(publicPath, imageBuffer);
 
       return {
-        thumbUrl: `/templates/thumbnails/${thumbFilename}`,
-        previewUrl: `/templates/previews/${previewFilename}`,
+        thumbUrl: `/templates/thumbnails/${filename}`,
+        previewUrl: `/templates/thumbnails/${filename}`,
       };
-    } finally {
-      await browser.close();
+    } catch (error) {
+      console.error('Failed to generate template assets via cloud:', error);
+      return {
+        thumbUrl: '/templates/thumbnails/default.png',
+        previewUrl: '/templates/previews/default.png',
+      };
     }
   }
 
