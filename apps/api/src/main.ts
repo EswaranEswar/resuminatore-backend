@@ -30,17 +30,42 @@ async function bootstrap() {
 
   const frontendUrl = configService.get<string>('FRONTEND_URL');
   const allowedOrigins = frontendUrl
-    ? frontendUrl.split(',').map((url) => url.trim().replace(/\/$/, ''))
+    ? frontendUrl
+        .split(',')
+        .map((url) => url.trim().replace(/'|"/g, '').replace(/\/+$/, ''))
     : '*';
 
   logger.log(`Frontend URL: ${frontendUrl}`);
-  logger.log(`Allowed CORS Origins: ${JSON.stringify(allowedOrigins)}`);
+  logger.log(`Parsed Allowed Origins: ${JSON.stringify(allowedOrigins)}`);
 
   app.use(helmet());
 
   app.enableCors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins === '*' || allowedOrigins.includes('*')) {
+        return callback(null, true);
+      }
+
+      const normalizedOrigin = origin.trim().replace(/\/+$/, '');
+      const isAllowed = allowedOrigins.some(
+        (allowed) => allowed.replace(/\/+$/, '') === normalizedOrigin,
+      );
+
+      if (isAllowed) {
+        // Return true to automatically reflect the request origin
+        callback(null, true);
+      } else {
+        logger.warn(`CORS unauthorized for origin: ${origin}`);
+        callback(new Error('CORS unauthorized'), false);
+      }
+    },
     credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders:
+      'Content-Type, Accept, Authorization, X-Requested-With, X-XSRF-TOKEN, x-request-id',
   });
 
   app.setGlobalPrefix(constants.API, {
