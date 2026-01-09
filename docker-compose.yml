@@ -5,6 +5,8 @@ services:
     command: pnpm run start:dev:fast
     ports:
       - '3000:3000'
+    env_file:
+      - .env
     networks:
       - resuminatore-network
 
@@ -14,6 +16,8 @@ services:
     command: 'pnpm run start:dev:fast ai-service'
     ports:
       - '3001:3001'
+    env_file:
+      - .env
     networks:
       - resuminatore-network
 

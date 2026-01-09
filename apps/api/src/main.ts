@@ -23,21 +23,19 @@ async function bootstrap() {
 
   app.useGlobalPipes(new ZodValidationPipe());
 
-  const env = process.env.NODE_ENV || 'development';
+  const configService = app.get(ConfigService);
+
+  const env = configService.get<string>('NODE_ENV');
   logger.log(`Environment: ${env}`);
 
-  const frontendUrl = app.get(ConfigService).get<string>('FRONTEND_URL');
-  const origins: string[] = [frontendUrl].filter(Boolean) as string[];
-  if (env !== 'production') {
-    origins.push('http://localhost:5173');
-    origins.push('http://127.0.0.1:5173');
-    origins.push('http://localhost:3003');
-  }
+  const frontendUrl = configService.get<string>('FRONTEND_URL');
+  logger.log(`Frontend URL: ${frontendUrl}`);
 
-  logger.log(`CORS Origins: ${JSON.stringify(origins)}`);
+  app.use(helmet());
+  logger.log(`CORS Origins: ${frontendUrl}`);
 
   app.enableCors({
-    origin: origins,
+    origin: frontendUrl,
     credentials: true,
   });
 

@@ -24,7 +24,7 @@ async function bootstrap() {
     await app.startAllMicroservices();
 
     const port = Number(app.get(ConfigService).get<number>('AI_SERVICE_PORT'));
-    await app.listen(port);
+    await app.listen(port, '0.0.0.0');
 
     logger.log(`AI microservice is running on: http://localhost:${port}`);
     logger.log(`🔌 AI microservice connected to Redis`);

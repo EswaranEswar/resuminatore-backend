@@ -1,6 +1,9 @@
 import { Params } from 'nestjs-pino';
 
-const isDev = process.env.NODE_ENV === 'development' || !process.env.NODE_ENV;
+const env = (process.env.NODE_ENV || 'development')
+  .replace(/^["']|["']$/g, '')
+  .trim();
+const isDev = env === 'development';
 
 export const pinoLoggerConfig: Params = {
   pinoHttp: {
