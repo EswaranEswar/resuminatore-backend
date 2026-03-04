@@ -10,38 +10,35 @@ import { QueueEnum } from '@app/shared';
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        const nodeEnv = config.get<string>('NODE_ENV') || 'development';
-        const isDevelopment = nodeEnv === 'development';
+        const nodeEnv = (
+          config.get<string>('NODE_ENV') || 'development'
+        ).toLowerCase();
 
         let connection:
           | { host?: string; port?: number; password?: string }
           | { url: string };
 
-        if (isDevelopment) {
-          // Development: Connect to local Redis
-          const host = config.get<string>('REDIS_HOST');
-          const port = config.get<number>('REDIS_PORT');
-          const password = config.get<string>('REDIS_PASSWORD');
+        const url = config.get<string>('REDIS_URL');
+        const host = config.get<string>('REDIS_HOST');
+        const port = config.get<number>('REDIS_PORT');
+        const password = config.get<string>('REDIS_PASSWORD');
 
-          console.log(`[BullMQ] Connecting to local Redis at ${host}:${port}`);
-
+        if (url) {
+          console.log(`[BullMQ] Connecting via URL (${nodeEnv} mode)`);
+          connection = { url };
+        } else if (host && port) {
+          console.log(
+            `[BullMQ] Connecting to Redis at ${host}:${port} (${nodeEnv} mode)`,
+          );
           connection = {
             host,
             port,
             password,
           };
         } else {
-          // Production: Connect via URL
-          const url = config.get<string>('REDIS_URL');
-
-          if (!url) {
-            throw new Error(
-              'Redis URL is required in production for BullMQ. Set REDIS_URL environment variable.',
-            );
-          }
-
-          console.log('[BullMQ] Connecting to Redis via URL (production mode)');
-          connection = { url };
+          throw new Error(
+            'Redis configuration missing for BullMQ! Provide REDIS_URL or (REDIS_HOST and REDIS_PORT) in .env',
+          );
         }
 
         return {

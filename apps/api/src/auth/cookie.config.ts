@@ -1,12 +1,12 @@
-export const getCookieOptions = () => {
-  const nodeEnv = process.env.NODE_ENV || 'development';
-  const isProd = nodeEnv === 'production';
+export const getCookieOptions = (
+  nodeEnv: string = 'development',
+  envSameSite: string = 'lax',
+  envSecure: boolean = false,
+) => {
+  const isProd = nodeEnv.toLowerCase() === 'production';
 
-  let sameSite = (process.env.COOKIE_SAMESITE || 'lax') as
-    | 'lax'
-    | 'strict'
-    | 'none';
-  let secure = process.env.COOKIE_SECURE === 'true';
+  let sameSite = envSameSite as 'lax' | 'strict' | 'none';
+  let secure = envSecure;
 
   if (isProd) {
     if (sameSite === 'none') secure = true;
@@ -20,5 +20,7 @@ export const getCookieOptions = () => {
   return {
     secure,
     sameSite,
+    httpOnly: true,
+    path: '/',
   };
 };

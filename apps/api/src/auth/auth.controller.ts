@@ -14,7 +14,6 @@ import { AuthGuard } from '@nestjs/passport';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { Public } from './decorator/public-decorator';
-import { SkipCsrf } from './decorator/csrf.decorator';
 
 import {
   LoginDto,
@@ -24,15 +23,10 @@ import {
   ResetPasswordDto,
   ForgotPasswordDto,
 } from '@app/shared';
-import { CsrfService } from './csrf/csrf.service';
-import { getCookieOptions } from './cookie.config';
 
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-    private readonly csrfService: CsrfService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   // REGISTER
   @Public()
@@ -80,7 +74,6 @@ export class AuthController {
 
   // GOOGLE OAUTH START
   @Public()
-  @SkipCsrf()
   @SkipThrottle()
   @Get('google')
   @UseGuards(AuthGuard('google'))
@@ -88,7 +81,6 @@ export class AuthController {
 
   // GOOGLE OAUTH CALLBACK
   @Public()
-  @SkipCsrf()
   @SkipThrottle()
   @Get('google/redirect')
   @UseGuards(AuthGuard('google'))
@@ -134,12 +126,5 @@ export class AuthController {
     return {
       user: req.user,
     };
-  }
-
-  @Public()
-  @Get('csrf')
-  initCsrf(@Res({ passthrough: true }) res: Response) {
-    this.csrfService.setCsrfCookie(res);
-    return { message: 'CSRF initialized' };
   }
 }

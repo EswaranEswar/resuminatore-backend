@@ -9,14 +9,12 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategy/jwt.strategy';
 import { GoogleStrategy } from './strategy/google.strategy';
 import { QueueModule } from '@app/core';
-import { CsrfModule } from './csrf/csrf.module';
 
 @Module({
   imports: [
     UserLibModule,
     QueueModule,
     RedisModule,
-    CsrfModule,
     PassportModule.register({
       defaultStrategy: 'jwt',
     }),

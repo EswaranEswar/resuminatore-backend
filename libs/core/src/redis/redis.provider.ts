@@ -7,10 +7,12 @@ export const RedisProvider: Provider = {
   provide: constants.REDIS_CLIENT,
   inject: [ConfigService],
   useFactory: async (configService: ConfigService) => {
-    const nodeEnv =
+    const envStr =
       configService.get<string>('NODE_ENV') ||
       process.env.NODE_ENV ||
       'development';
+    const nodeEnv = envStr.toLowerCase().trim();
+
     const isDevelopment = nodeEnv === 'development';
 
     const baseOptions: RedisOptions = {
@@ -22,17 +24,26 @@ export const RedisProvider: Provider = {
 
     let client: Redis;
 
-    if (isDevelopment) {
-      const host = configService.get<string>('REDIS_HOST');
-      const port = configService.get<number>('REDIS_PORT');
-      const password = configService.get<string>('REDIS_PASSWORD');
+    const url = configService.get<string>('REDIS_URL');
+    const host = configService.get<string>('REDIS_HOST');
+    const port = configService.get<number>('REDIS_PORT');
+    const password = configService.get<string>('REDIS_PASSWORD');
 
-      if (!host || !port) {
-        throw new Error('REDIS_HOST and REDIS_PORT must be set in development');
-      }
+    if (url) {
+      const isSsl =
+        url.toLowerCase().startsWith('rediss://') || url.includes('upstash');
+      console.log(
+        `[Redis] Connecting via URL (${nodeEnv} mode, SSL: ${isSsl})`,
+      );
 
-      console.log(`[Redis] Connecting to local Redis at ${host}:${port}`);
-
+      client = new Redis(url, {
+        ...baseOptions,
+        ...(isSsl && { tls: { rejectUnauthorized: false } }),
+      });
+    } else if (host && port) {
+      console.log(
+        `[Redis] Connecting to Redis at ${host}:${port} (${nodeEnv} mode)`,
+      );
       client = new Redis({
         ...baseOptions,
         host,
@@ -40,18 +51,9 @@ export const RedisProvider: Provider = {
         ...(password && { password }),
       });
     } else {
-      const url = configService.get<string>('REDIS_URL');
-
-      if (!url) {
-        throw new Error('REDIS_URL is required in production');
-      }
-
-      console.log('[Redis] Connecting to Redis via URL (production mode)');
-
-      client = new Redis(url, {
-        ...baseOptions,
-        tls: { rejectUnauthorized: false }, // 🔥 REQUIRED for Upstash
-      });
+      throw new Error(
+        `Redis configuration missing! Provide REDIS_URL or (REDIS_HOST and REDIS_PORT) in .env`,
+      );
     }
 
     client.on('connect', () => {

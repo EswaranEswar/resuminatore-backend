@@ -1,60 +1,63 @@
 import { Params } from 'nestjs-pino';
 
-const env = (process.env.NODE_ENV || 'development')
-  .replace(/^["']|["']$/g, '')
-  .trim();
-const isDev = env === 'development';
+export const getPinoLoggerConfig = (
+  nodeEnv: string,
+  pretty: boolean = false,
+): Params => {
+  const env = (nodeEnv || 'development').replace(/^["']|["']$/g, '').trim();
+  const isDev = env === 'development';
 
-export const pinoLoggerConfig: Params = {
-  pinoHttp: {
-    level: isDev ? 'debug' : 'info',
+  return {
+    pinoHttp: {
+      level: isDev ? 'debug' : 'info',
 
-    ...(isDev && {
-      transport: {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          singleLine: false,
-          translateTime: 'SYS:standard',
-          ignore: 'pid,hostname',
+      ...((isDev || pretty) && {
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            singleLine: false,
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
+          },
         },
+      }),
+
+      autoLogging: {
+        ignore: (req) => req.url === '/health',
       },
-    }),
 
-    autoLogging: {
-      ignore: (req) => req.url === '/health',
-    },
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie'],
+        censor: '***',
+      },
 
-    redact: {
-      paths: ['req.headers.authorization', 'req.headers.cookie'],
-      censor: '***',
-    },
-
-    customProps(req) {
-      return {
-        service: 'resuminatore-backend',
-        requestId: req.id ?? req.headers['x-request-id'],
-      };
-    },
-
-    serializers: {
-      req(req) {
+      customProps(req) {
         return {
-          method: req.method,
-          url: req.url,
-          requestId: req.id,
+          service: 'resuminatore-backend',
+          requestId: req.id ?? req.headers['x-request-id'],
         };
       },
-      res(res) {
-        return { statusCode: res.statusCode };
+
+      serializers: {
+        req(req) {
+          return {
+            method: req.method,
+            url: req.url,
+            requestId: req.id,
+          };
+        },
+        res(res) {
+          return { statusCode: res.statusCode };
+        },
+      },
+
+      customLogLevel(req, res, err) {
+        if (err) return 'error';
+        if (res.statusCode >= 500) return 'error';
+        if (res.statusCode >= 400) return 'warn';
+        return 'info';
       },
     },
-
-    customLogLevel(req, res, err) {
-      if (err) return 'error';
-      if (res.statusCode >= 500) return 'error';
-      if (res.statusCode >= 400) return 'warn';
-      return 'info';
-    },
-  },
+  };
 };

@@ -26,7 +26,6 @@ import {
 } from '@app/shared';
 import { QueueService, EmailTemplates } from '@app/core';
 import { hashConstants, jwtConstants } from './constants/auth.constants';
-import { CsrfService } from './csrf/csrf.service';
 import { getCookieOptions } from './cookie.config';
 
 @Injectable()
@@ -39,9 +38,16 @@ export class AuthService {
     private readonly clsService: ClsService,
     private readonly config: ConfigService,
     private readonly queueService: QueueService,
-    private readonly csrfService: CsrfService,
     @Inject(constants.REDIS_CLIENT) private readonly redis: Redis,
   ) {}
+
+  private getFinalCookieOptions() {
+    return getCookieOptions(
+      this.config.get<string>('NODE_ENV'),
+      this.config.get<string>('COOKIE_SAMESITE'),
+      this.config.get<boolean>('COOKIE_SECURE'),
+    );
+  }
 
   // ─────────────────────────────────────────────
   // REGISTER
@@ -323,8 +329,9 @@ export class AuthService {
   async logout() {
     const res = this.clsService.get<Response>('res');
     if (res) {
-      res.clearCookie('access_token', { path: '/' });
-      res.clearCookie('refresh_token', { path: '/' });
+      const opts = this.getFinalCookieOptions();
+      res.clearCookie('access_token', opts);
+      res.clearCookie('refresh_token', opts);
     }
     return { message: 'Logged out successfully' };
   }
@@ -362,26 +369,17 @@ export class AuthService {
       return;
     }
 
-    const { secure, sameSite } = getCookieOptions();
+    const cookieOptions = this.getFinalCookieOptions();
 
     res.cookie('access_token', accessToken, {
-      httpOnly: true,
-      secure,
-      sameSite,
-      path: '/',
+      ...cookieOptions,
       maxAge: 15 * 60 * 1000,
     });
 
     res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure,
-      sameSite,
-      path: '/',
+      ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-
-    // CSRF cookie (JS readable)
-    this.csrfService.setCsrfCookie(res);
   }
 
   // ─────────────────────────────────────────────

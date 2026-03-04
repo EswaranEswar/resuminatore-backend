@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # App config
+# ARG NODE_ENV=development
 ENV NODE_ENV=${NODE_ENV}
 
 WORKDIR /app
@@ -22,7 +23,7 @@ RUN npm install -g pnpm
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Copy source
+# Copy source   
 COPY . .
 
 # Build NestJS

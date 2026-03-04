@@ -15,7 +15,6 @@ import {
   Delete,
 } from '@nestjs/common';
 import { Public } from '../auth/decorator/public-decorator';
-import { SkipCsrf } from '../auth/decorator/csrf.decorator';
 
 @Controller('resume')
 export class ResumeController {
@@ -27,7 +26,6 @@ export class ResumeController {
   }
 
   @Public()
-  @SkipCsrf()
   @Post()
   async createResume(
     @Body() resumeModel: CreateResumeDto,
@@ -45,7 +43,6 @@ export class ResumeController {
   }
 
   @Public()
-  @SkipCsrf()
   @Get(':id')
   async getResumeById(@Param('id') id: string): Promise<ResumeType> {
     return await this.resumeService.getResumeById(id);

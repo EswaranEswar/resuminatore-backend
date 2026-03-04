@@ -17,7 +17,6 @@ import { TemplateModule } from './template/template.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { SystemBootstrapModule } from '@app/core/bootstrap/system-bootstrap.module';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
-import { CsrfGuard } from './auth/guard/csrf.guard';
 import { HealthModule } from './health/health.module';
 
 export const clsSetupHelper = (
@@ -53,11 +52,15 @@ export const clsSetupHelper = (
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env', './.env', '../.env'],
+    }),
     ThrottlerModule.forRoot({
       throttlers: [
         {
           ttl: 60 * 1000,
-          limit: 100, // normal APIs
+          limit: 100,
         },
       ],
     }),
@@ -85,10 +88,6 @@ export const clsSetupHelper = (
         setup: (cls, context) => clsSetupHelper(cls, context),
       },
     }),
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-    }),
     ExportModule,
     HealthModule,
     ResumeModule,
@@ -106,10 +105,6 @@ export const clsSetupHelper = (
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
-    },
-    {
-      provide: APP_GUARD,
-      useClass: CsrfGuard,
     },
     {
       provide: APP_INTERCEPTOR,

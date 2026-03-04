@@ -11,6 +11,6 @@ dc_resource('ai',
 #   ports=['3001'],
 )
 
-dc_resource('redis',
-  labels=['redis'],
-)
+# dc_resource('redis',
+#   labels=['redis'],
+# )

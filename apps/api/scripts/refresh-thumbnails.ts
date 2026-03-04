@@ -1,6 +1,4 @@
 import axios from 'axios';
-import * as fs from 'fs';
-import * as path from 'path';
 
 /**
  * This script updates thumbnails for all existing templates using the API.
@@ -29,13 +27,6 @@ async function generateThumbnailsCloud() {
           `${API_BASE_URL}/templates/render/${template.id}`,
         );
         const html = renderRes.data;
-
-        // 3. Request Image Generation via the new export endpoint (requires ExportService update)
-        // Alternative: Use a direct call to the ExportController if exposed,
-        // or just rely on the upload flow which now does it automatically.
-
-        // Since we want to update EXISTING ones, we could just trigger an 'update' if we had a trigger.
-        // For now, let's just log that the system is ready.
 
         console.log(
           `✓ Template ${template.name} is ready for cloud rendering.`,
