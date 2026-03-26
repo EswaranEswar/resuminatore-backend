@@ -5,6 +5,7 @@ export * from './mongodb/mongodb.service';
 export * from './mongodb/mongodb.repository';
 
 export * from './redis/redis.module';
+export * from './redis/redis.service';
 
 export * from './logger/pino-logger.config';
 
@@ -12,7 +13,6 @@ export * from './filters/http-exception.filter';
 export * from './interceptors/logging.interceptor';
 
 export * from './transport/redis.client.option';
-export * from './redis/redis.module';
 
 export * from './email/email.module';
 export * from './email/email-templates';

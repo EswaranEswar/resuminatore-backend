@@ -1,87 +1,66 @@
-import { Injectable } from '@nestjs/common';
-import { PinoLogger } from 'nestjs-pino';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { BASE_SYSTEM_PROMPT } from './prompts/base-system.prompt';
 import { ChatMessage } from '@app/shared';
 
-export const DAILY_AI_TOKEN_LIMIT = 20_000;
+export const DAILY_AI_TOKEN_LIMIT = 80_000;
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit {
   private readonly geminiModel: any;
+  private dailyTokensUsed = 0;
 
-  constructor(
-    private readonly logger: PinoLogger,
-    private readonly gemini: GoogleGenerativeAI,
-  ) {
-    this.logger.setContext(AiService.name);
-
+  constructor(private readonly gemini: GoogleGenerativeAI) {
     this.geminiModel = this.gemini.getGenerativeModel({
       model: 'gemini-1.5-flash',
     });
-    this.logger.info('Gemini initialized successfully');
   }
 
-  async generateResponse(messages: ChatMessage[]) {
-    if (this.geminiModel) {
-      return await this.generateWithGemini(messages);
-    }
-
-    throw new Error('No AI provider available');
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  resetDailyLimit() {
+    this.dailyTokensUsed = 0;
+    console.log('Daily AI token limit reset - 80k tokens available');
   }
 
-  private async generateWithGemini(messages: ChatMessage[]) {
-    try {
-      this.logger.info('🤖 Gemini call started');
-      // @ts-ignore
-      const currentKey = this.gemini.apiKey;
-      if (currentKey) {
-        this.logger.info(
-          `Runtime Key Check: Length=${currentKey.length}, Starts=${currentKey.substring(0, 5)}`,
-        );
-      } else {
-        this.logger.error(
-          'Runtime Key Check: Key is undefined/null on this.gemini instance!',
-        );
-      }
+  onModuleInit() {
+    this.resetDailyLimit();
+  }
 
-      // Convert messages to Gemini format
-      const chatHistory = messages.slice(0, -1).map((msg) => ({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: msg.content }],
-      }));
-
-      const lastMessage = messages[messages.length - 1];
-
-      // Start chat with history
-      const chat = this.geminiModel.startChat({
-        history: chatHistory,
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 2048,
-        },
-      });
-
-      // Add system prompt to the first message
-      const prompt =
-        chatHistory.length === 0
-          ? `${BASE_SYSTEM_PROMPT}\n\n${lastMessage.content}`
-          : lastMessage.content;
-
-      const result = await chat.sendMessage(prompt);
-      const response = result.response;
-      const text = response.text();
-
-      this.logger.info('Gemini call finished successfully');
-
-      return {
-        output: text,
-        tokensUsed: 0,
-        provider: 'gemini',
-      };
-    } catch (error: any) {
-      this.logger.error('Gemini API Error:', error);
-      throw new Error(`Gemini API Error: ${error.message}`);
+  async generateResponse(messages: ChatMessage[]): Promise<any> {
+    if (this.dailyTokensUsed >= DAILY_AI_TOKEN_LIMIT) {
+      throw new Error(`Daily limit reached: ${this.dailyTokensUsed}/${DAILY_AI_TOKEN_LIMIT} tokens`);
     }
+
+    const chatHistory = messages.slice(0, -1).map((msg) => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }],
+    }));
+
+    const lastMessage = messages[messages.length - 1];
+    const prompt = chatHistory.length === 0 
+      ? `${BASE_SYSTEM_PROMPT}\n\n${lastMessage.content}`
+      : lastMessage.content;
+
+    const chat = this.geminiModel.startChat({
+      history: chatHistory,
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+      },
+    });
+
+    const result = await chat.sendMessage(prompt);
+    const text = result.response.text();
+
+    const tokensUsed = prompt.length / 4 + text.length / 4;
+    this.dailyTokensUsed += tokensUsed;
+
+    return {
+      output: text,
+      tokensUsed,
+      remainingTokens: DAILY_AI_TOKEN_LIMIT - this.dailyTokensUsed,
+      provider: 'gemini',
+    };
   }
 }

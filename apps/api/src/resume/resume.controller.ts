@@ -14,7 +14,7 @@ import {
   Param,
   Delete,
 } from '@nestjs/common';
-import { Public } from '../auth/decorator/public-decorator';
+import { Public } from '../auth/decorator/public.decorator';
 
 @Controller('resume')
 export class ResumeController {

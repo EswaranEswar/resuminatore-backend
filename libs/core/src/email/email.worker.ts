@@ -24,7 +24,7 @@ export class EmailWorker extends BaseWorker {
     protected readonly logger: PinoLogger,
   ) {
     super();
-    this.logger.setContext(EmailWorker.name);
+    this.logger.setContext(EmailWorker.name); 
   }
 
   async process(job: Job<EmailJobData>): Promise<string> {

@@ -1,5 +1,4 @@
 export * from './shared.module';
-export * from './shared.service';
 
 export * from './constants/constants';
 export * from './constants/enum';

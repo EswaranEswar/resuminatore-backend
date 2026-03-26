@@ -19,11 +19,11 @@ export class UserService {
   ) {}
 
   get userId(): string {
-    const sessionUser = this.clsService.get('session')?.user;
-    if (!sessionUser?.id) {
-      throw new BadRequestException('User ID not found in session');
+    const user = this.clsService.get('user');
+    if (!user?.id) {
+      throw new BadRequestException('User not found in session context');
     }
-    return sessionUser.id;
+    return user.id;
   }
 
   async getAllUsers() {
@@ -152,8 +152,6 @@ export class UserService {
   async verifyUser(email: string): Promise<UserType> {
     const Updated = await this.userRepository.updateByEmail(email, {
       isVerified: true,
-      otp: null,
-      otpExpiry: null,
     });
     const parseResult = UserSchema.safeParse(Updated);
     if (parseResult.success === false) {

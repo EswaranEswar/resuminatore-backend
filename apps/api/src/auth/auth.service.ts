@@ -1,392 +1,134 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   BadRequestException,
-  Logger,
-  Inject,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Response } from 'express';
-import * as bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
+import { Request } from 'express';
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { ConfigService } from '@nestjs/config';
 import { ClsService } from 'nestjs-cls';
-import Redis from 'ioredis';
-
 import { UserService } from '@app/user';
-import {
-  RegisterDto,
-  LoginDto,
-  VerifyOtpDto,
-  SendOtpDto,
-  ResetPasswordDto,
-  OathLoginDto,
-  constants,
-  UserType,
-} from '@app/shared';
-import { QueueService, EmailTemplates } from '@app/core';
-import { hashConstants, jwtConstants } from './constants/auth.constants';
-import { getCookieOptions } from './cookie.config';
+import { CognitoService } from './cognito.service';
+import { RedisService, EmailTemplates, QueueService } from '@app/core';
+import { UserType } from '@app/shared';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
-    private readonly usersService: UserService,
-    private readonly jwtService: JwtService,
+    private readonly redisService: RedisService,
+    private readonly userService: UserService,
     private readonly clsService: ClsService,
-    private readonly config: ConfigService,
+    private readonly configService: ConfigService,
+    private readonly cognitoService: CognitoService,
     private readonly queueService: QueueService,
-    @Inject(constants.REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
-  private getFinalCookieOptions() {
-    return getCookieOptions(
-      this.config.get<string>('NODE_ENV'),
-      this.config.get<string>('COOKIE_SAMESITE'),
-      this.config.get<boolean>('COOKIE_SECURE'),
-    );
-  }
+  async handleSignin(request: Request) {
+    this.logger.log(`Request auth headers: ${JSON.stringify(request.headers)}`);
 
-  // ─────────────────────────────────────────────
-  // REGISTER
-  // ─────────────────────────────────────────────
-  async register(dto: RegisterDto) {
-    const existing = await this.usersService.findByEmail(dto.email);
-    if (existing) throw new UnauthorizedException('User already exists');
-
-    if (dto.password !== dto.confirmPassword) {
-      throw new BadRequestException('Passwords do not match');
+    const authHeader = request.headers.authorization;
+    if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+      throw new UnauthorizedException('Bearer token not found');
     }
 
-    const hashed = await bcrypt.hash(dto.password, hashConstants.saltRounds);
-    const otp = this.generateOtp();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    const accessToken = authHeader.substring(7);
 
-    const user = await this.usersService.createUser({
-      name: dto.fullName,
-      email: dto.email,
-      password: hashed,
-      otp,
-      otpExpiry,
+    // 1. Verify token with Cognito
+    const userPoolId = this.configService.get<string>('COGNITO_USER_POOL_ID');
+    const clientId = this.configService.get<string>('COGNITO_CLIENT_ID');
+
+    const verifier = CognitoJwtVerifier.create({
+      userPoolId: userPoolId!,
+      tokenUse: 'access',
+      clientId: clientId!,
     });
 
-    await this.usersService.updateUserByEmail(user.email, {
-      createdBy: user.id,
-      updatedBy: user.id,
-    });
-
-    await this.queueService.sendEmail({
-      email: user.email,
-      mailDetails: {
-        subject: 'OTP Code',
-        html: EmailTemplates.otp(user.name || '', otp),
-      },
-    });
-
-    return { message: 'OTP sent to email. Please verify your account.' };
-  }
-
-  // ─────────────────────────────────────────────
-  // VERIFY OTP
-  // ─────────────────────────────────────────────
-  async verifyOtp(dto: VerifyOtpDto) {
-    const user = await this.usersService.findByEmail(dto.email);
-    if (!user || !user.otp || !user.otpExpiry) {
-      throw new UnauthorizedException('Invalid OTP request');
+    try {
+      await verifier.verify(accessToken);
+    } catch (err) {
+      this.logger.error(`Token verification failed: ${err.message}`);
+      throw new UnauthorizedException('Invalid bearer token');
     }
 
-    if (user.otpExpiry < new Date()) {
-      throw new UnauthorizedException('OTP expired');
+    // 2. Fetch User Profile from Cognito
+    const authenticateResult =
+      await this.cognitoService.getUserProfile(accessToken);
+    const email = authenticateResult.UserAttributes?.find(
+      (attr) => attr.Name === 'email',
+    )?.Value;
+    const name =
+      authenticateResult.UserAttributes?.find((attr) => attr.Name === 'name')
+        ?.Value || email;
+
+    if (!email) {
+      throw new BadRequestException(
+        'Email attribute not found in Cognito profile',
+      );
     }
 
-    if (dto.otp !== user.otp) {
-      throw new UnauthorizedException('Invalid OTP');
-    }
-
-    await this.usersService.verifyUser(dto.email);
-
-    await this.queueService.sendEmail({
-      email: user.email,
-      mailDetails: {
-        subject: 'Welcome!',
-        html: EmailTemplates.welcome(user.name),
-      },
-    });
-
-    await this.generateAndSetTokens(user);
-
-    return {
-      message: 'Account verified successfully',
-      user: this.safeUser(user),
-    };
-  }
-
-  // ─────────────────────────────────────────────
-  // LOGIN
-  // ─────────────────────────────────────────────
-  async login(dto: LoginDto) {
-    const user = await this.usersService.findByEmail(dto.email);
-    if (!user || !user.password) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    if (!user.isVerified) {
-      throw new UnauthorizedException('Account not verified');
-    }
-
-    const match = await bcrypt.compare(dto.password, user.password);
-    if (!match) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    await this.generateAndSetTokens(user);
-
-    const origin = this.clsService.get('req')?.headers?.origin;
-    this.logger.log(
-      `User logged in: ${user.email} from origin: ${origin || 'direct/unknown'}`,
-    );
-
-    return {
-      message: 'Login successful',
-      user: this.safeUser(user),
-    };
-  }
-
-  async sendOtp(dto: SendOtpDto) {
-    const user = await this.usersService.findByEmail(dto.email);
+    // 3. JIT Provisioning
+    let user = await this.userService.findByEmail(email);
     if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    const otp = this.generateOtp();
-    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
-
-    await this.usersService.updateUserByEmail(dto.email, {
-      otp,
-      otpExpiry,
-    });
-
-    await this.queueService.sendEmail({
-      email: user.email,
-      mailDetails: {
-        subject: 'OTP Code',
-        html: EmailTemplates.otp(user.name || '', otp),
-      },
-    });
-
-    this.logger.log(`OTP sent to ${user.email}`);
-
-    return {
-      message: 'OTP sent successfully',
-    };
-  }
-
-  async forgotPassword(email: string) {
-    const user = await this.usersService.findByEmail(email);
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    const resetToken = randomBytes(32).toString('hex');
-    const resetTokenExpiry = new Date(Date.now() + 30 * 60 * 1000); // 30 mins
-
-    await this.usersService.updateUserByEmail(email, {
-      resetPasswordToken: resetToken,
-      resetPasswordTokenExpiry: resetTokenExpiry,
-    });
-
-    const frontendUrl = this.config
-      .get<string>('FRONTEND_URL')
-      ?.replace(/\/$/, '');
-    const resetLink = `${frontendUrl}/reset-password?token=${encodeURIComponent(
-      resetToken,
-    )}&email=${encodeURIComponent(email)}`;
-
-    await this.queueService.sendEmail({
-      email,
-      mailDetails: {
-        subject: 'Password Reset Request',
-        html: EmailTemplates.passwordReset(user.name, resetLink),
-      },
-    });
-
-    this.logger.log(`Password reset link sent to ${email}`);
-
-    return {
-      message: 'Password reset link sent to email',
-    };
-  }
-
-  async resetPassword(dto: ResetPasswordDto) {
-    const user = await this.usersService.findByEmail(dto.email);
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    if (!user.resetPasswordToken || !user.resetPasswordTokenExpiry) {
-      throw new UnauthorizedException('No reset token found');
-    }
-
-    if (user.resetPasswordTokenExpiry < new Date()) {
-      throw new UnauthorizedException('Reset token expired');
-    }
-
-    if (user.resetPasswordToken !== dto.token) {
-      throw new UnauthorizedException('Invalid reset token');
-    }
-
-    const hashedPassword = await bcrypt.hash(
-      dto.newPassword,
-      hashConstants.saltRounds,
-    );
-
-    await this.usersService.updateUserByEmail(dto.email, {
-      password: hashedPassword,
-      resetPasswordToken: null,
-      resetPasswordTokenExpiry: null,
-    });
-
-    this.logger.log(`Password reset successful for ${dto.email}`);
-
-    return {
-      message: 'Password reset successfully',
-    };
-  }
-
-  // ─────────────────────────────────────────────
-  // GOOGLE OAUTH
-  // ─────────────────────────────────────────────
-  async handleGoogleLogin(dto: OathLoginDto, res: Response) {
-    if (!dto.email) {
-      throw new UnauthorizedException('Google login failed');
-    }
-
-    let user = await this.usersService.findByEmail(dto.email);
-
-    if (!user) {
-      user = await this.usersService.createUser({
-        name: dto.name,
-        email: dto.email,
-        provider: 'GOOGLE',
-        providerId: dto.providerId,
-        avatar: dto.avatar,
+      this.logger.log(`Provisioning new local user for: ${email}`);
+      user = await this.userService.createUser({
+        name,
+        email,
         isVerified: true,
-      });
+      } as any);
 
-      await this.usersService.updateUserByEmail(user.email, {
+      // Self-link createdBy/updatedBy
+      await this.userService.updateUserByEmail(email, {
         createdBy: user.id,
         updatedBy: user.id,
       });
-    } else {
-      await this.usersService.linkOAuthToExistingUser({
+
+      // Send welcome email
+      await this.queueService.sendEmail({
         email: user.email,
-        provider: 'GOOGLE',
-        providerId: dto.providerId,
-        avatar: dto.avatar,
+        mailDetails: {
+          subject: 'Welcome to Resuminatore!',
+          html: EmailTemplates.welcome(user.name),
+        },
       });
     }
 
-    // set cookies via CLS
-    this.clsService.set('res', res);
-    await this.generateAndSetTokens(user);
+    // 4. Setup Session
+    request.session['isAuthenticated'] = true;
+    request.session['user'] = this.safeUser(user);
+    request.session['accessToken'] = accessToken;
 
-    return {
-      message: 'Google login successful',
-      user: this.safeUser(user),
-    };
+    // Track active session IDs in Redis
+    const sessionKey = `user_sessions:${user.id}`;
+    const availableSessionIds =
+      (await this.redisService.getJson<string[]>(sessionKey)) || [];
+    await this.redisService.setJson(sessionKey, [
+      ...new Set([...availableSessionIds, request.sessionID]),
+    ]);
+
+    this.logger.log(`User logged in: ${email}`);
+    return request.session['user'];
   }
 
-  // ─────────────────────────────────────────────
-  // REFRESH TOKEN
-  // ─────────────────────────────────────────────
-  async refreshToken() {
-    const req = this.clsService.get('req') as any;
-    const token = req?.cookies?.refresh_token;
-
-    if (!token) throw new UnauthorizedException('No refresh token');
-
-    const decoded = await this.jwtService.verifyAsync(token, {
-      secret: jwtConstants.secret,
-    });
-
-    const user = await this.usersService.findByUserId(decoded.sub);
-    if (!user || !user.refreshToken) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    const valid = await bcrypt.compare(token, user.refreshToken);
-    if (!valid) throw new UnauthorizedException('Invalid refresh token');
-
-    await this.generateAndSetTokens(user);
-    return { message: 'Token refreshed' };
-  }
-
-  // ─────────────────────────────────────────────
-  // LOGOUT
-  // ─────────────────────────────────────────────
-  async logout() {
-    const res = this.clsService.get<Response>('res');
-    if (res) {
-      const opts = this.getFinalCookieOptions();
-      res.clearCookie('access_token', opts);
-      res.clearCookie('refresh_token', opts);
-    }
-    return { message: 'Logged out successfully' };
-  }
-
-  // ─────────────────────────────────────────────
-  // INTERNAL TOKEN LOGIC (SINGLE SOURCE)
-  // ─────────────────────────────────────────────
-  private async generateAndSetTokens(user: UserType) {
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-      name: user.name,
-      avatar: user.avatar,
-      planType: user.planType,
-    };
-
-    const accessToken = this.jwtService.sign(payload, {
-      expiresIn: jwtConstants.accessExpiry,
-    });
-
-    const refreshToken = this.jwtService.sign(payload, {
-      expiresIn: jwtConstants.refreshExpiry,
-    });
-
-    await this.usersService.updateUserByEmail(user.email, {
-      refreshToken: await bcrypt.hash(refreshToken, hashConstants.saltRounds),
-    });
-
-    const res = this.clsService.get<Response>('res');
-    if (!res) {
-      this.logger.error(
-        'No Response object found in CLS. Tokens not set in cookies.',
+  async handleSignout(request: Request) {
+    if (request.session['user']) {
+      const user = request.session['user'] as any;
+      const sessionKey = `user_sessions:${user.id}`;
+      const availableSessionIds =
+        (await this.redisService.getJson<string[]>(sessionKey)) || [];
+      const updatedSessionIds = availableSessionIds.filter(
+        (id) => id !== request.sessionID,
       );
-      return;
+
+      if (updatedSessionIds.length > 0) {
+        await this.redisService.setJson(sessionKey, updatedSessionIds);
+      } else {
+        await this.redisService.del(sessionKey);
+      }
     }
-
-    const cookieOptions = this.getFinalCookieOptions();
-
-    res.cookie('access_token', accessToken, {
-      ...cookieOptions,
-      maxAge: 15 * 60 * 1000,
-    });
-
-    res.cookie('refresh_token', refreshToken, {
-      ...cookieOptions,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-  }
-
-  // ─────────────────────────────────────────────
-  // HELPERS
-  // ─────────────────────────────────────────────
-  private generateOtp(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return 'success';
   }
 
   private safeUser(user: UserType) {

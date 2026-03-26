@@ -7,17 +7,13 @@ import {
   Patch,
   Post,
   UploadedFile,
-  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { TemplateService, TemplateUploadService } from '@app/template';
 import { CreateTemplateDto, UpdateTemplateDto } from '@app/shared';
 import { Express } from 'express';
-import { JwtAuthGuard } from '../auth/guard/jwt-auth.guard';
-import { RolesGuard } from '../auth/guard/roles.guard';
-import { Roles } from '../auth/decorator/roles.decorator';
-import { Public } from '../auth/decorator/public-decorator';
+import { Public } from '../auth/decorator/public.decorator';
 
 @Controller('templates')
 export class TemplateController {
@@ -39,15 +35,11 @@ export class TemplateController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   async create(@Body() data: CreateTemplateDto) {
     return await this.templateService.create(data);
   }
 
   @Post('upload')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   @UseInterceptors(FileInterceptor('file'))
   async upload(
     @UploadedFile() file: Express.Multer.File,
@@ -65,22 +57,16 @@ export class TemplateController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   async update(@Param('id') id: string, @Body() data: UpdateTemplateDto) {
     return await this.templateService.update(id, data);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   async delete(@Param('id') id: string) {
     return await this.templateService.delete(id);
   }
 
   @Post('seed')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('admin')
   async seed() {
     await this.templateService.seedTemplates();
     return { message: 'Templates seeded successfully' };

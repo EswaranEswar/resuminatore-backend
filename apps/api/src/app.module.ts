@@ -1,14 +1,12 @@
 import { join } from 'path';
 import { ExecutionContext, Module } from '@nestjs/common';
 import { ClsModule, ClsService } from 'nestjs-cls';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { CoreModule, HttpExceptionFilter, LoggingInterceptor } from '@app/core';
 import { UserModule } from './user/user.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { JwtAuthGuard } from './auth/guard/jwt-auth.guard';
+import { AuthGuard } from './auth/guard/auth.guard';
 import { ResumeModule } from './resume/resume.module';
 import { ExportModule } from './export/export.module';
 import { QueueAdminModule } from './queue-admin/queue-admin.module';
@@ -36,14 +34,19 @@ export const clsSetupHelper = (
     }
 
     if (!req) return;
+
+    // Set basic request/response objects
     cls.set('req', req);
-    if (req.session) {
-      cls.set('session', req.session);
-    } else if (!cls.get('session')) {
-      cls.set('session', null);
-    }
     if (response) {
       cls.set('res', response);
+    }
+
+    // Sync session and user if available
+    if (req.session) {
+      cls.set('session', req.session);
+      if (req.session['user']) {
+        cls.set('user', req.session['user']);
+      }
     }
   } catch (e) {
     console.error('[CLS SETUP ERROR]', e);
@@ -95,16 +98,15 @@ export const clsSetupHelper = (
     UserModule,
     QueueAdminModule,
   ],
-  controllers: [AppController],
+  controllers: [],
   providers: [
-    AppService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
     },
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
+      useClass: AuthGuard,
     },
     {
       provide: APP_INTERCEPTOR,

@@ -15,7 +15,6 @@ export const MongoUserSchema = new Schema({
     default: MongoRoleEnum[0],
   },
 
-  password: { type: String, required: false },
   avatar: { type: String, default: null },
 
   provider: {
@@ -31,10 +30,6 @@ export const MongoUserSchema = new Schema({
     enum: MongoPlanTypeEnum,
     default: MongoPlanTypeEnum[0],
   },
-
-  otp: { type: String, default: null },
-  otpExpiry: { type: Date, default: null },
-
   isVerified: { type: Boolean, default: false },
 
   resumeLists: {
@@ -48,15 +43,11 @@ export const MongoUserSchema = new Schema({
     ],
     default: [],
   },
-  resetPasswordToken: { type: String, default: null },
-  resetPasswordTokenExpiry: { type: Date, default: null },
 
   aiUsage: {
     date: { type: String },
     tokensUsed: { type: Number, default: 0 },
   },
-
-  refreshToken: { type: String, default: null },
 
   ...MongoBaseSchema.obj,
 });
@@ -65,16 +56,12 @@ export interface MongoUser extends BaseDocument {
   name: string;
   email: string;
   role: (typeof MongoRoleEnum)[number];
-  password?: string;
   avatar?: string | null;
 
   provider: (typeof MongoProviderEnum)[number];
   providerId?: string;
 
   planType: (typeof MongoPlanTypeEnum)[number];
-
-  otp?: string | null;
-  otpExpiry?: Date | null;
 
   isVerified: boolean;
 
@@ -85,13 +72,8 @@ export interface MongoUser extends BaseDocument {
     updatedAt: string;
   }>;
 
-  resetPasswordToken?: string | null;
-  resetPasswordTokenExpiry?: Date | null;
-
   aiUsage?: {
     date?: string;
     tokensUsed?: number;
   };
-
-  refreshToken?: string | null;
 }

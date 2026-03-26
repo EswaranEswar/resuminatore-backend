@@ -9,7 +9,6 @@ export const RoleEnum = z.enum(['user', 'admin']);
 export const UserSchema = z.object({
   name: z.string(),
   email: z.string().email(),
-  password: z.string().min(8).optional(),
 
   provider: ProviderEnum.default('LOCAL'),
   providerId: z.string().optional(),
@@ -18,12 +17,6 @@ export const UserSchema = z.object({
 
   isVerified: z.boolean().default(false),
   role: RoleEnum.default('user'),
-
-  otp: z.string().nullable().optional(),
-  otpExpiry: z.date().nullable().optional(),
-
-  resetPasswordToken: z.string().nullable().optional(),
-  resetPasswordTokenExpiry: z.date().nullable().optional(),
 
   planType: PlanEnum.default('FREE'),
 
@@ -44,8 +37,6 @@ export const UserSchema = z.object({
       tokensUsed: z.number().optional(),
     })
     .optional(),
-
-  refreshToken: z.string().nullable().optional(),
 
   ...BaseSchema.shape,
 });
@@ -95,6 +86,12 @@ export const OathLoginSchema = z.object({
   avatar: z.string().url().optional(),
 });
 
+export const GithubGetAccessTokenSchema = z.object({
+  client_id: z.string(),
+  client_secret: z.string(),
+  code: z.string(),
+});
+
 export type UserType = z.infer<typeof UserSchema>;
 export type ProviderType = z.infer<typeof ProviderEnum>;
 export class UserDto extends createZodDto(UserSchema) {}
@@ -108,3 +105,6 @@ export class VerifyOtpDto extends createZodDto(VerifyOtpSchema) {}
 export class ForgotPasswordDto extends createZodDto(ForgotPasswordSchema) {}
 export class ResetPasswordDto extends createZodDto(ResetPasswordSchema) {}
 export class OathLoginDto extends createZodDto(OathLoginSchema) {}
+export class GithubGetAccessTokenDto extends createZodDto(
+  GithubGetAccessTokenSchema,
+) {}

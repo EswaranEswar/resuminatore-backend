@@ -1,37 +1,16 @@
-import { ExecutionContext, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { AiService } from './ai.service';
-import { ClsModule, ClsService } from 'nestjs-cls';
 import { AiMessageController } from './ai.controller';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CoreModule } from '@app/core';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-
-export const clsSetupHelper = (cls: ClsService, context: ExecutionContext) => {
-  try {
-    let session: Record<string, any> | null = null;
-
-    if (context.getType() === 'rpc') {
-      session = context.switchToRpc().getData()['headers']?.['session'];
-    }
-    cls.set('session', session);
-  } catch (e: any) {
-    throw new Error(e.message);
-  }
-};
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
     CoreModule,
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
-    ClsModule.forRoot({
-      global: true,
-      guard: {
-        mount: true,
-        setup: clsSetupHelper,
-      },
-    }),
+    ScheduleModule.forRoot(),
+    ConfigModule.forRoot({ isGlobal: true }),
   ],
   controllers: [AiMessageController],
   providers: [
@@ -41,22 +20,18 @@ export const clsSetupHelper = (cls: ClsService, context: ExecutionContext) => {
       useFactory: (configService: ConfigService) => {
         const apiKey = configService.get<string>('GEMINI_API_KEY');
         if (!apiKey) {
-          throw new Error(
-            'GEMINI_API_KEY is not defined in environment variables',
-          );
+          throw new Error('GEMINI_API_KEY is not defined');
         }
-        // Handle docker env_file quirks: quotes are part of value, inline comments are part of value
-        const sanitizedKey = apiKey
-          .split('#')[0]
-          .replace(/^["']|["']$/g, '')
-          .trim();
-        console.log(
-          `CoreModule: GEMINI_API_KEY loaded (Length: ${sanitizedKey.length}, Starts: ${sanitizedKey.substring(0, 4)}...)`,
-        );
+        const sanitizedKey = apiKey.split('#')[0].replace(/^["']|["']$/g, '').trim();
+        if (sanitizedKey.length < 10) {
+          throw new Error('Invalid GEMINI_API_KEY format');
+        }
+        console.log('GEMINI_API_KEY loaded successfully');
         return new GoogleGenerativeAI(sanitizedKey);
       },
       inject: [ConfigService],
     },
   ],
+  exports: [AiService],
 })
 export class AiModule {}

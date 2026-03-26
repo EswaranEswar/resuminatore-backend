@@ -1,6 +1,5 @@
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as bcrypt from 'bcrypt';
 import { UserService } from '@app/user';
 import { TemplateService } from '@app/template';
 
@@ -16,28 +15,25 @@ export class SystemBootstrapService implements OnModuleInit {
 
   async onModuleInit() {
     const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
-    const adminPassword = this.configService.get<string>('ADMIN_PASSWORD');
 
-    if (!adminEmail || !adminPassword) {
-      this.logger.warn(
-        'ADMIN_EMAIL or ADMIN_PASSWORD not set. Skipping system bootstrap.',
-      );
-      return;
-    }
+    if (!adminEmail) {
+      this.logger.warn('ADMIN_EMAIL not set. Skipping system admin bootstrap.');
+    } else {
+      let adminUser = await this.userService.findByEmail(adminEmail);
+      if (!adminUser) {
+        adminUser = await this.userService.createUser({
+          email: adminEmail,
+          name: 'System Admin',
+          role: 'admin',
+          isVerified: true,
+        });
+        this.logger.log(`System admin profile created: ${adminEmail}`);
 
-    // 1. Check if admin user exists
-    let adminUser = await this.userService.findByEmail(adminEmail);
-    if (!adminUser) {
-      const hashedPassword = await bcrypt.hash(adminPassword, 10);
-      // Create admin with only essential fields
-      adminUser = await this.userService.createUser({
-        email: adminEmail,
-        name: 'System Admin',
-        password: hashedPassword,
-        role: 'admin',
-        isVerified: true,
-      });
-      this.logger.log(`System admin created: ${adminEmail}`);
+        await this.userService.updateUserByEmail(adminEmail, {
+          createdBy: adminUser.id,
+          updatedBy: adminUser.id,
+        });
+      }
     }
 
     // 2. Seed Templates

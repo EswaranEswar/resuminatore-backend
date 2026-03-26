@@ -8,20 +8,32 @@ import helmet from 'helmet';
 import { ZodValidationPipe } from 'nestjs-zod';
 import * as cookieParser from 'cookie-parser';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import * as session from 'express-session';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
   });
 
+  const configService = app.get(ConfigService);
   app.use(cookieParser());
+  app.use(
+    session({
+      secret:
+        configService.get<string>('SESSION_SECRET') || '',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: configService.get<string>('NODE_ENV') === 'production',
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      },
+    }),
+  );
 
   const logger = app.get(Logger);
   app.useLogger(logger);
-
   app.useGlobalPipes(new ZodValidationPipe());
-
-  const configService = app.get(ConfigService);
 
   const env = configService.get<string>('NODE_ENV') || '';
   logger.log(`Environment: ${env}`);
@@ -32,7 +44,10 @@ async function bootstrap() {
   app.use(helmet());
   logger.log(`CORS Origins: ${frontendUrl}`);
 
-  const allowedOrigins = ['https://resuminatore.vercel.app', 'http://localhost:3003'];
+  const allowedOrigins = [
+    'https://resuminatore.vercel.app',
+    'http://localhost:3003',
+  ];
 
   app.enableCors({
     origin: (origin, callback) => {
